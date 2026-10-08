@@ -67,6 +67,10 @@ class MarkovChain(Generic[T]):
 			if len(context) != self.order:
 				raise ValueError(f"start must contain exactly {self.order} states")
 
+			if not self.trie.next_counts(context):
+				raise ValueError("""starting context has no known 
+					continuation in training data""")
+
 		generated = list(context)
 		while len(generated) < note_count:
 			next_state = self.choose_next(tuple(generated[-self.order:]),rng)

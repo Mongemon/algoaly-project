@@ -21,7 +21,6 @@ class Melody:
 	pitches: tuple[int, ...]
 
 
-
 class MelodyCatalog:
 	def __init__(self, database_path):
 		self.database_path = database_path
@@ -65,7 +64,6 @@ class MelodyCatalog:
 			connection.close()
 
 		return [row["key"] for row in rows]
-
 
 	#search melodies by title and/or key
 	def search(self, title=None, key=None, limit=None):
@@ -141,7 +139,7 @@ class MelodyCatalog:
 
 		return self.row_to_melody(row)
 
-#removes duplicate melodies from given melodies
+#removes duplicate melodies from given set of melodies
 def remove_duplicate_melodies(melodies):
 	unique = []
 	seen_pitches = set()

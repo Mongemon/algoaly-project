@@ -37,6 +37,145 @@ def ask_optional_text(prompt):
 
 	return value
 
+#Returns all distinct MIDI ptiches in the training data
+def get_available_pitches(training_sequences):
+	return sorted(
+	{pitch for sequence in training_sequences for pitch in sequence})
+
+#Prints all distinct MIDI pitches in the training data
+def print_available_pitches(training_sequences):
+	pitches = get_available_pitches(training_sequences)
+	print(
+		f"\nAVAILABLE MIDI PITCHES\n"
+		f"----------------------\n")
+	print(" ".join(str(pitch) for pitch in pitches))
+
+#Converts a str MIDI sequence into a tuple
+def parse_pitch_sequence(text):
+	parts = text.replace(",", " ").split()
+	if not parts:
+		raise ValueError("No pitches were entered")
+
+	try:
+		pitches = tuple(int(value) for value in parts)
+	except ValueError:
+		raise ValueError("All pitches must be integers")
+
+	invalid = [pitch for pitch in pitches if pitch < 0 or pitch > 127]
+
+	if invalid:
+		raise ValueError("MIDI pitches must be between 0 and 127")
+
+	return pitches
+
+#Asks the user for a MIDI pitch sequence
+def ask_pitch_sequence(prompt, exact_length=None):
+	while True:
+		text = input(prompt).strip()
+
+		try:
+			pitches = parse_pitch_sequence(text)
+		except ValueError as error:
+			print(f"Error: {error}")
+			continue
+
+		if exact_length is not None:
+			if len(pitches) != exact_length:
+				print(f"Enter exactly {exact_length} pitches.")
+				continue
+
+		return pitches
+
+#Ask the user for training data
+def ask_custom_training_data():
+	print(
+		f"\n"
+		f"CUSTOM TRAINING DATA\n"
+		f"--------------------\n"
+		f"Enter the training melody as MIDI pitches separated by spaces\n"
+		)
+
+	sequence = ask_pitch_sequence("Training melody: ")
+
+	return [sequence]
+
+def choose_training_data(catalog):
+	print(
+		f"\n"
+		f"TRAINING DATA\n"
+		f"-------------\n")
+
+	while True:
+		print(
+			f"Type 'c' for corpus/database melodies.\n"
+			f"Type 'u' to give own training melody.\n"
+			)
+		choice = input("Training data: ").strip().lower()
+		if choice == "u":
+			return ask_custom_training_data()
+		if choice == "c":
+			melodies = search_melodies(catalog)
+
+			if not melodies:
+				print("No melodies found.")
+				continue
+
+			print_search_results(melodies)
+			selected = choose_training_melodies(melodies)
+			print_training_set(selected)
+			return [melody.pitches for melody in selected]
+
+#Ask the user for a starting context
+def ask_custom_start(chain, training_sequences):
+	print(
+		f"\n"
+		f"CUSTOM STARTING SEQUENCE\n"
+		f"------------------------\n"
+		)
+
+	print_available_pitches(training_sequences)
+
+	print()
+
+	while True:
+		start = ask_pitch_sequence(
+			f"Enter exactly {chain.order} pitches: ", exact_length=chain.order)
+
+		available_pitches = set(get_available_pitches(training_sequences))
+
+		for pitch in start:
+			if pitch not in available_pitches:
+				raise ValueError(
+					f"{pitch} does not occur in the selected training data."
+					)
+
+		counts = chain.trie.next_counts(start)
+
+		if not counts:
+			print(
+				f"This starting sequence has no known continuation, "
+				f"give another sequence"
+				)
+			continue
+
+		return start
+
+#Asks for the preferred starting context
+def choose_start_mode():
+	print(
+		f"\n"
+		f"STARTING SEQUENCE\n"
+		f"-----------------\n"
+		f"Type 'r' for a random position in training data\n"
+		f"Type 'u' for your own starting sequence\n"
+		)
+
+	while True:
+		choice = input("Starting sequence: ").strip().lower()
+		if choice in ("r", "u"):
+			return choice
+		print("Choose 'r' or 'u'.")
+
 #Asks user for title/key parameters and returns matching melodies
 def search_melodies(catalog):
 	print(
@@ -168,14 +307,16 @@ def ask_generation_settings():
 	return order, note_count
 
 #Trains a Markov chain using the selected melodies
-def create_chain(melodies, order):
-	usable_melodies = [melody for melody in melodies if len(melody.pitches) > order]
+def create_chain(training_sequences, order):
+	usable_sequences = [
+	sequence for sequence in training_sequences if len(sequence) > order
+	]
 
-	if not usable_melodies:
-		raise ValueError("The selected melodies are not long enough for this Markov order")
+	if not usable_sequences:
+		raise ValueError("The training data is not long enough for this Markov order")
 
 	chain = MarkovChain(order=order)
-	chain.fit(melody.pitches for melody in usable_melodies)
+	chain.fit(usable_sequences)
 
 	return chain
 
@@ -189,11 +330,16 @@ def print_generated_melody(pitches):
 	print(" ".join(str(pitch) for pitch in pitches))
 
 #Generates melodies repeatedly until the user quits
-def generate_repeatedly(chain, note_count):
+def generate_repeatedly(chain, note_count, start_mode, custom_start = None):
 	rng = random.Random()
 
 	while True:
-		generated = chain.generate(note_count=note_count, rng = rng)
+		if start_mode == "r":
+			start = None
+		else:
+			start = custom_start
+
+		generated = chain.generate(note_count=note_count, start=start, rng=rng)
 		print_generated_melody(generated)
 		print()
 
@@ -220,40 +366,28 @@ def main():
 		f"=================================\n"
 		)
 
-	while True:
-		try:
-			melodies = search_melodies(catalog)
-		except Exception as error:
-			print(f"Database error: {error}")
-			return
 
-		if not melodies:
-			print("No melodies found.")
-			command = input("Try another search? [Enter/q]: ").strip().lower()
+	try:
+		training_sequences = choose_training_data(catalog)
+		order, note_count = (ask_generation_settings())
+		chain = create_chain(training_sequences, order)
+		start_mode = choose_start_mode()
+		custom_start = None
 
-			if command == "q":
-				return
-			continue
+		if start_mode == "u":
+			custom_start = ask_custom_start(chain, training_sequences)
 
-		print_search_results(melodies)
+	except ValueError as error:
+		print(f"\nError: {error}")
+		return
 
-		try:
-			selected = choose_training_melodies(melodies)
-			print_training_set(selected)
-			order, note_count = ask_generation_settings()
-			chain = create_chain(selected, order)
-		except ValueError as error:
-			print(f"Error: {error}")
-			continue
 
-		print(
-			f"\n"
-			f"Training Markov chain of order {order}...\n"
-			f"Using {len(selected)} melodies.")
+	print(
+		f"\n"
+		f"Training Markov chain of order {order}...\n"
+		f"Using {len(training_sequences)} melodies.")
 
-		generate_repeatedly(chain, note_count)
-
-		break
+	generate_repeatedly(chain, note_count, start_mode, custom_start)
 
 if __name__ == "__main__":
 	main()
